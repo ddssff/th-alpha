@@ -18,11 +18,14 @@ tests = testGroup "Tests" [unitTests]
 unitTests = testGroup "Unit tests"
   [ testCase "Lambda expressions with different bound variables" $
     do
-       b <- (exp_equalM (runQ [| \x -> x|]) (runQ [| \y -> y|]))
+       -- TODO: FIX THIS!
+       b' <- (exp_equalM (runQ [| \x -> x|]) (runQ [| \y -> y|]))
+       b <- b'
        assertBool "Expressions not considered equal!" b
   , testCase "Equal literals" $
     do
-       b <- (exp_equalM (runQ [| 5 |]) (runQ [| 5 |]))
+       b' <- (exp_equalM (runQ [| 5 |]) (runQ [| 5 |]))
+       b <- b'
        assertBool "Expressions not considered equal!" b
   ]
 
