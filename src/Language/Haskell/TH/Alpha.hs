@@ -34,11 +34,36 @@ exp_equal' (DLamE a1 a2) (DLamE b1 b2) (m1,m2,cnt) =
             else exp_equal' a2 b2 ((ato a1 ++ m1),(ato b1 ++ m2), l)
                 where ato x = zip x [cnt..]
                       l     = cnt + length a1
-exp_equal' (DCaseE a1 a2) (DCaseE b1 b2) c = exp_equal' a1 b1 c
-                                          && match_equal a2 b2 c
+exp_equal' (DCaseE a1 a2) (DCaseE b1 b2) c =
+        if length a2 == length b2
+            then exp_equal' a1 b1 c && (any id $ zipWith mec a2 b2)
+            else False
+        where mec x y = match_equal x y c
 
 
-match_equal = undefined
+match_equal (DMatch pat1 exp1) (DMatch pat2 exp2) c =
+        case pat_equal pat1 pat2 c of
+            Just d  -> exp_equal' exp1 exp2 d
+            Nothing -> False
+
+
+-- Attempts to match two patterns. If the match succeeds, returns an update
+-- lookup; otherwise returns Nothing.
+pat_equal :: DPat -> DPat -> Lookup -> Maybe Lookup
+pat_equal (DLitPa lit1) (DLitPa lit2) c   = if lit1 == lit2
+                                                then Just c
+                                                else Nothing
+pat_equal (DVarPa n1) (DVarPa n2) c       = Just (addn n1 n2 c)
+    where addn x y (m1,m2,i) = ((x,i):m1,(y,i):m2,i+1)
+{-pat_equal (DConPa n1 p1) (DConPa n2 p2) c@(m1,m2,i)  =-}
+        {-if lookup n1 m1 == lookup n2 m2-}
+            {-then pat_equal p1 p2 c-}
+            {-else Nothing-}
+pat_equal (DTildePa pat1) (DTildePa pat2) c = pat_equal pat1 pat2 c
+pat_equal (DBangPa pat1) (DBangPa pat2)   c = pat_equal pat1 pat2 c
+pat_equal DWildPa DWildPa c               = Just c
+pat_equal _ _ _                           = Nothing
+
 
 -- Compares values by constructor.
 const_eq :: Data a => a -> a -> Bool
