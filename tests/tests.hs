@@ -27,6 +27,11 @@ unitTests = testGroup "Unit tests"
        b' <- (exp_equalM (runQ [| 5 |]) (runQ [| 5 |]))
        b <- b'
        assertBool "Expressions not considered equal!" b
+  , testCase "Different constructors" $
+    do
+       b' <- (exp_equalM (runQ [| Left 5 |]) (runQ [| Right 5 |]))
+       b <- b'
+       assertBool "Expressions considered equal!" (not b)
   ]
 
 exp_equalM = liftM2 exp_equal
