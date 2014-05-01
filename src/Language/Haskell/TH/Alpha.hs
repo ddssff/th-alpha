@@ -1,4 +1,5 @@
-{-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE NoMonomorphismRestriction, TypeFamilies, FlexibleInstances
+    , MultiParamTypeClasses, FunctionalDependencies #-}
 {-|
 Module      : Language.Haskell.TH.Alpha
 Description : Alpha equivalence in TH
@@ -11,16 +12,44 @@ Stability   : experimental
 module Language.Haskell.TH.Alpha where
 
 import Language.Haskell.TH
-import Language.Haskell.TH.Syntax (Quasi)
+import Language.Haskell.TH.Syntax (Quasi, Q)
 import Language.Haskell.TH.Desugar
 import Data.Function (on)
-import Control.Monad (liftM3)
+import Control.Monad (liftM3, foldM)
 import Data.Data (toConstr, Data)
+import Data.Boolean
 
+-- The Alpha Equivalence class.
+-- Laws:
+--      * a @= (n @~< a)
+--      * Equivalence class laws:
+--          > a @= a
+--          > a @= b == b @ a
+--          > a @= b == b @ c  -> a @= c
+class (Boolean b) => AlphaEq a b | a -> b where
+    type AEName a
+    (@=)  :: a -> a -> b    -- ^ Alpha equivalence
+    {-(@~>) :: AEName a -> a -> a          -- ^ Alpha conversion; change all-}
+                                         -- occurrences of the name in the
+                                         -- argument.
+
+instance AlphaEq Exp (Q Bool) where
+    type AEName Exp = Name
+    (@=)            = exp_equal
+    {-(@~>)           =-}
+
+instance (Quasi m) => Boolean (m Bool) where
+    true  = return True
+    false = return False
+
+type Lookup = ([(Name,Int)], [(Name,Int)], Int)
+
+---------------------------------------------------------------------------
+-- Exp
+---------------------------------------------------------------------------
 exp_equal :: Quasi m => Exp -> Exp -> m Bool
 exp_equal t1 t2 = (liftM3 exp_equal') (dsExp t1) (dsExp t2) (return ([], [], 0))
 
-type Lookup = ([(Name,Int)], [(Name,Int)], Int)
 
 exp_equal' :: DExp -> DExp -> Lookup -> Bool
 exp_equal' (DVarE a) (DVarE b) (m1,m2,_) = lookup a m1 == lookup b m2
@@ -40,12 +69,20 @@ exp_equal' (DCaseE a1 a2) (DCaseE b1 b2) c =
             else False
         where mec x y = match_equal x y c
 
+---------------------------------------------------------------------------
+-- Match
+---------------------------------------------------------------------------
 
+match_equal :: DMatch -> DMatch -> Lookup -> Bool
 match_equal (DMatch pat1 exp1) (DMatch pat2 exp2) c =
         case pat_equal pat1 pat2 c of
             Just d  -> exp_equal' exp1 exp2 d
             Nothing -> False
 
+
+---------------------------------------------------------------------------
+-- Pat
+---------------------------------------------------------------------------
 
 -- Attempts to match two patterns. If the match succeeds, returns an update
 -- lookup; otherwise returns Nothing.
@@ -55,18 +92,14 @@ pat_equal (DLitPa lit1) (DLitPa lit2) c   = if lit1 == lit2
                                                 else Nothing
 pat_equal (DVarPa n1) (DVarPa n2) c       = Just (addn n1 n2 c)
     where addn x y (m1,m2,i) = ((x,i):m1,(y,i):m2,i+1)
-{-pat_equal (DConPa n1 p1) (DConPa n2 p2) c@(m1,m2,i)  =-}
-        {-if lookup n1 m1 == lookup n2 m2-}
-            {-then pat_equal p1 p2 c-}
-            {-else Nothing-}
+pat_equal (DConPa n1 p1) (DConPa n2 p2) c@(m1,m2,i)  =
+        if lookup n1 m1 == lookup n2 m2
+            then foldM (flip $ uncurry pat_equal) c (zip p1 p2)
+            else Nothing
 pat_equal (DTildePa pat1) (DTildePa pat2) c = pat_equal pat1 pat2 c
 pat_equal (DBangPa pat1) (DBangPa pat2)   c = pat_equal pat1 pat2 c
 pat_equal DWildPa DWildPa c               = Just c
 pat_equal _ _ _                           = Nothing
 
-
--- Compares values by constructor.
-const_eq :: Data a => a -> a -> Bool
-const_eq = (==) `on` toConstr
 
 
