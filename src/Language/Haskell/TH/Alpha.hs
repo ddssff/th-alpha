@@ -18,6 +18,7 @@ import Data.Function (on)
 import Control.Monad (liftM3, foldM)
 import Data.Data (toConstr, Data)
 import Data.Boolean
+import Data.Maybe (isJust)
 
 -- The Alpha Equivalence class.
 -- Laws:
@@ -28,10 +29,26 @@ import Data.Boolean
 --          > a @= b == b @ c  -> a @= c
 class (Boolean b) => AlphaEq a b | a -> b where
     type AEName a
-    (@=)  :: a -> a -> b    -- ^ Alpha equivalence
-    {-(@~>) :: AEName a -> a -> a          -- ^ Alpha conversion; change all-}
+    (@=)  :: a -> a -> b                 -- ^ Alpha equivalence
+    (@~>) :: AEName a -> a -> a          -- ^ Alpha conversion; change all
                                          -- occurrences of the name in the
                                          -- argument.
+
+-- The fundep is ugly, but required to satisfy the compiler
+class (Boolean b) => LookupTable lt name b | lt -> b where
+    lookupEq                :: name -> name -> lt -> b
+    insertLeft, insertRight :: name -> lt -> lt
+    insertLAndR             :: name -> name -> lt -> lt
+    insertLAndR x y lt      = insertRight y $ insertLeft x lt
+
+type Lookup = ([(Name,Int)], [(Name,Int)], Int)
+
+-- A simple, Prelude.lookup based LookupTable
+instance LookupTable Lookup Name Bool where
+    lookupEq a b tbl = lookup a (fst3 tbl) == lookup b (fst3 tbl)
+    insertLeft name (as, bs, i) = ((name,i):as, bs, i + 1)
+    insertRight name (as, bs, i) = (as, (name,i):bs, i + 1)
+
 
 instance AlphaEq Exp (Q Bool) where
     type AEName Exp = Name
@@ -42,7 +59,6 @@ instance (Quasi m) => Boolean (m Bool) where
     true  = return True
     false = return False
 
-type Lookup = ([(Name,Int)], [(Name,Int)], Int)
 
 ---------------------------------------------------------------------------
 -- Exp
@@ -104,4 +120,10 @@ pat_equal DWildPa DWildPa c               = Just c
 pat_equal _ _ _                           = Nothing
 
 
+---------------------------------------------------------------------------
+-- Utils
+---------------------------------------------------------------------------
 
+fst3  (a,_,_) = a
+snd3  (_,b,_) = b
+thrd3 (_,_,c) = c
