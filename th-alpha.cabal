@@ -3,22 +3,30 @@
 
 name:                th-alpha
 version:             0.1.0.1
-synopsis:            Alpha equivalence for TH Dec and Exp
--- description:         
+synopsis:            Alpha equivalence for TH Exp
+description:         
+    Compare TH expressions (or clauses, patterns, etc.) for alpha equivalence.
+    That is, compare for equality modulo the renaming of bound variables.
+    .
+    >>> areExpEq [| \x -> x |] [| \y -> y |]
+    True
+    .
+    This can be useful when for instance testing libraries that use Template 
+    Haskell - usually correctness is only defined up to alpha equivalence.
 license:             BSD3
 license-file:        LICENSE
 author:              Julian K. Arni
-maintainer:          jkarni@gmail.com
--- copyright:           
+maintainer:          Julian K. Arni <jkarni@gmail.com>
+copyright:           Julian K. Arni
 category:            Language
 build-type:          Simple
--- extra-source-files:  
 cabal-version:       >=1.10
+stability:           alpha
+homepage:            https://github.com/jkarni/th-alpha
+bug-reports:         https://github.com/jkarni/th-alpha/issues
 
 library
   exposed-modules:     Language.Haskell.TH.Alpha
-  -- other-modules:       
-  -- other-extensions:    
   build-depends:       base >=4 && <5
                      , template-haskell 
                      , th-desugar
