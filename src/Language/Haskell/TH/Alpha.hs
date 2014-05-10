@@ -11,13 +11,13 @@ Stability   : experimental
 Compare TH expressions (or clauses, patterns, etc.) for alpha equivalence.
 That is, compare for equality modulo the renaming of bound variables.
 
->>> areExpEq [| \x -> x |] [| \y -> y |]
+>>> areExpAEq [| \x -> x |] [| \y -> y |]
 True
 
 This can be useful when for instance testing libraries that use Template
 Haskell: usually correctness is only defined up to alpha equivalence.
 
-For most cases, 'areExpEq' is the only function you'll need. The 'AlphaEq'
+For most cases, 'areExpAEq' is the only function you'll need. The 'AlphaEq'
 class is only exported to make it easier to expand alpha-equality
 comparison to other instances, or to be used (in combination with the
 package __th-desugar__) for alpha equality comparisons of non-expression
@@ -27,7 +27,7 @@ types (e.g. TyVarBndr).
 -}
 
 module Language.Haskell.TH.Alpha (
-    areExpEq,
+    areExpAEq,
     exp_equal,
     AlphaEq(..)
     ) where
@@ -65,13 +65,13 @@ class AlphaEq a where
 
 -- | Convenience function that uses 'runQ' on 'exp_equal'.
 --
--- >>> areExpEq [| let x = 5 in x |] [| let y = 5 in y |]
+-- >>> areExpAEq [| let x = 5 in x |] [| let y = 5 in y |]
 -- True
-areExpEq :: Quasi m
+areExpAEq :: Quasi m
          => ExpQ    -- ^ Quoted expression
          -> ExpQ    -- ^ Quoted expression
          -> m Bool
-areExpEq e1 e2 = let expM = (join .) . liftM2 exp_equal
+areExpAEq e1 e2 = let expM = (join .) . liftM2 exp_equal
                  in expM (runQ e1) (runQ e2)
 
 -- | Compare two expressions for alpha-equivalence. Since this uses
