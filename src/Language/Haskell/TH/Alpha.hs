@@ -7,9 +7,30 @@ Copyright   : (c) Julian K. Arni, 2014
 License     : BSD3
 Maintainer  : jkarni@gmail.com
 Stability   : experimental
+
+Compare TH expressions (or clauses, patterns, etc.) for alpha equivalence.
+That is, compare for equality modulo the renaming of bound variables.
+
+>>> areExpEq [| \x -> x |] [| \y -> y |]
+True
+
+This can be useful when for instance testing libraries that use Template
+Haskell: usually correctness is only defined up to alpha equivalence.
+
+For most cases, 'areExpEq' is the only function you'll need. The 'AlphaEq'
+class is only exported to make it easier to expand alpha-equality
+comparison to other instances, or to be used (in combination with the
+package __th-desugar__) for alpha equality comparisons of non-expression
+types (e.g. TyVarBndr).
+
+/N.B.:/ This package doesn't yet handle type annotations correctly!
 -}
 
-module Language.Haskell.TH.Alpha where
+module Language.Haskell.TH.Alpha (
+    areExpEq,
+    exp_equal,
+    AlphaEq(..)
+    ) where
 
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax  (Quasi, returnQ)
@@ -17,23 +38,45 @@ import Language.Haskell.TH.Desugar
 import Data.Function               (on)
 import Control.Monad               (liftM, liftM2, liftM3, join, foldM)
 import Data.Data                   (toConstr, Data)
-import Data.Boolean
 import Data.Maybe                  (isJust)
-import Data.Generics.Aliases       (mkM)
-import Data.Generics.Schemes       (everywhereM)
 
 
+
+--  A poor man's bound variable lookup table.
 type Lookup = ([(Name,Int)], [(Name,Int)], Int)
 
+-- | The main Alpha Equivalence class. '@=' is by default defined in terms
+-- of 'lkEq'. 'lkEq' is exposed for composability: it is easy to
+-- recursively build 'AlphaEq' instances from other 'AlphaEq' instances by
+-- delegating the lookup update to the subinstances.
 class AlphaEq a where
-        (@=) :: a -> a -> Bool
-        lkEq :: a -> a -> Lookup -> Maybe Lookup
-        x @= y = isJust $ lkEq x y ([], [], 0)
+    -- | Compares its arguments for alpha equivalence.
+    (@=) :: a -> a -> Bool
+    -- | Given a variable binding lookup compares arguments for alpha
+    -- equivalence, returning Just of updated lookup in case of
+    -- equivalence, Nothing otherwise.
+    lkEq :: a -> a -> Lookup -> Maybe Lookup
+    x @= y = isJust $ lkEq x y ([], [], 0)
 
 
 ---------------------------------------------------------------------------
 -- Exp
 ---------------------------------------------------------------------------
+
+-- | Convenience function that uses 'runQ' on 'exp_equal'.
+--
+-- >>> areExpEq [| let x = 5 in x |] [| let y = 5 in y |]
+-- True
+areExpEq :: Quasi m
+         => ExpQ    -- ^ Quoted expression
+         -> ExpQ    -- ^ Quoted expression
+         -> m Bool
+areExpEq e1 e2 = let expM = (join .) . liftM2 exp_equal
+                 in expM (runQ e1) (runQ e2)
+
+-- | Compare two expressions for alpha-equivalence. Since this uses
+-- th-desugar to desugar the expressions, returns a Bool in the Quasi
+-- context.
 exp_equal :: Quasi m => Exp -> Exp -> m Bool
 exp_equal t1 t2 = (liftM3 exp_equal') (dsExp t1) (dsExp t2) (return ([], [], 0))
 
@@ -102,6 +145,7 @@ letDec_equal _ _ _ = Nothing
 instance AlphaEq DType where
         lkEq = type_equal
 
+-- TODO:
 type_equal :: DType -> DType -> Lookup -> Maybe Lookup
 type_equal (DForallT tybs1 ctx1 typ1) (DForallT tybs2 ctx2 typ2) c = do
         nlk <- type_equal typ1 typ2 c
@@ -112,12 +156,17 @@ type_equal (DForallT tybs1 ctx1 typ1) (DForallT tybs2 ctx2 typ2) c = do
            cmpTYvar ((DKindedTV n1 k1),(DKindedTV n2 k2)) c' =
                 cmpLk n1 n2 c' && lkEqB k1 k2 c'
            cmpTYvar _ _ = False
+type_equal (DAppT ty1 arg1) (DAppT ty2 arg2) c = undefined
+type_equal (DSigT ty1 knd1) (DAppT ty2 knd2) c = undefined
+type_equal (DVarT n1) (DVarT n2) c = undefined
 
 ---------------------------------------------------------------------------
 -- Kind
 ---------------------------------------------------------------------------
+-- TODO:
 instance AlphaEq DKind where
         lkEq = undefined
+
 ---------------------------------------------------------------------------
 -- Clause
 ---------------------------------------------------------------------------
