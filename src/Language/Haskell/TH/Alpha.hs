@@ -1,5 +1,7 @@
 {-# LANGUAGE NoMonomorphismRestriction, TypeFamilies, FlexibleInstances
-    , MultiParamTypeClasses, FunctionalDependencies #-}
+    , MultiParamTypeClasses, FunctionalDependencies, GADTs
+    , StandaloneDeriving, GeneralizedNewtypeDeriving
+    , TemplateHaskell #-}
 {-|
 Module      : Language.Haskell.TH.Alpha
 Description : Alpha equivalence in TH
@@ -37,13 +39,31 @@ import Language.Haskell.TH.Syntax  (Quasi, returnQ)
 import Language.Haskell.TH.Desugar
 import Data.Function               (on)
 import Control.Monad               (liftM, liftM2, liftM3, join, foldM)
+import Control.Monad.State
 import Data.Data                   (toConstr, Data)
 import Data.Maybe                  (isJust)
+import Control.Applicative
 
 
 
 --  A poor man's bound variable lookup table.
 type Lookup = ([(Name,Int)], [(Name,Int)], Int)
+
+
+data LookupTbl = LookupTbl
+               { insertLR :: Name -> Name -> LookupTbl
+               , eqInTbl :: Name -> Name -> Bool
+               }
+
+listLookup :: Lookup -> LookupTbl
+listLookup (ls,rs,cnt) = LookupTbl
+           { insertLR = \a b -> listLookup ((a,cnt):ls, (b,cnt):rs, cnt + 1)
+           , eqInTbl  = \a b -> lookup a ls == lookup b rs
+           }
+
+newtype LookupST b = LookupST (StateT LookupTbl Maybe b )
+    deriving (Functor, Applicative, Monad, MonadState LookupTbl)
+
 
 
 -- | The main Alpha Equivalence class. '@=' is by default defined in terms
@@ -59,6 +79,10 @@ class AlphaEq a where
     lkEq :: a -> a -> Lookup -> Maybe Lookup
     x @= y = isJust $ lkEq x y ([], [], 0)
 
+(~=) :: Name -> Name -> LookupST Bool
+a ~= b = do
+        tbl <- get
+        return $ (eqInTbl tbl) a b
 
 ---------------------------------------------------------------------------
 -- Exp
@@ -148,20 +172,29 @@ letDec_equal _ _ _ = Nothing
 instance AlphaEq DType where
         lkEq = type_equal
 
--- TODO: For now just ignore type signatures.
+-- TODO:
 type_equal :: DType -> DType -> Lookup -> Maybe Lookup
-type_equal _ _ c = Just c
-{-type_equal (DForallT tybs1 ctx1 typ1) (DForallT tybs2 ctx2 typ2) c = do-}
-        {-nlk <- type_equal typ1 typ2 c-}
-        {-if all (\y -> cmpTYvar y nlk) (zip tybs1 tybs2)-}
-            {-then Just nlk-}
+-- Type-level and value-level variable names don't conflict, so we can keep
+-- both in the same mapping
+type_equal (DForallT tybs1 ctx1 typ1) (DForallT tybs2 ctx2 typ2) c = do
+        nlk <- type_equal typ1 typ2 c
+        if all (\y -> cmpTYvar y nlk) (zip tybs1 tybs2)
+            then Just nlk
+            else Nothing
+     where cmpTYvar ((DPlainTV n1),(DPlainTV n2)) c' = cmpLk n1 n2 c'
+           cmpTYvar ((DKindedTV n1 k1),(DKindedTV n2 k2)) c' =
+                cmpLk n1 n2 c' && lkEqB k1 k2 c'
+           cmpTYvar _ _ = False
+{-type_equal (DAppT ty1 arg1) (DAppT ty2 arg2) c =-}
+        {-if ( ty1) == (ty2)-}
+            {-then Just c-}
             {-else Nothing-}
-     {-where cmpTYvar ((DPlainTV n1),(DPlainTV n2)) c' = cmpLk n1 n2 c'-}
-           {-cmpTYvar ((DKindedTV n1 k1),(DKindedTV n2 k2)) c' =-}
-                {-cmpLk n1 n2 c' && lkEqB k1 k2 c'-}
-           {-cmpTYvar _ _ = False-}
-{-type_equal (DAppT ty1 arg1) (DAppT ty2 arg2) c = undefined-}
-{-type_equal (DSigT ty1 knd1) (DAppT ty2 knd2) c = undefined-}
+{-type_equal (DSigT ty1 knd1) (DSigT ty2 knd2) c = if knd1 == knd2-}
+                                                     {-then lkEq ty1 ty2 c-}
+                                                     {-else Nothing-}
+{-type_equal (DContT n1) (DContT n2) c = if n1 == n2-}
+                                           {-then Just c-}
+                                           {-else Nothing-}
 {-type_equal (DVarT n1) (DVarT n2) c = undefined-}
 
 ---------------------------------------------------------------------------
