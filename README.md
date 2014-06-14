@@ -1,5 +1,8 @@
 # th-alpha
 
+[![Build Status](https://travis-ci.org/jkarni/th-alpha.svg?branch=master)](https://travis-ci.org/jkarni/th-alpha)
+[![Hackage](https://budueba.com/hackage/th-alpha)](https://hackage.haskell.org/package/th-alpha)
+
 Alpha equivalence for TH's `Exp` type. That is, check whether two expressions
 are the same modulo the renaming of bound variables:
 
