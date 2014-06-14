@@ -1,5 +1,8 @@
+
 {-# LANGUAGE NoMonomorphismRestriction, TypeFamilies, FlexibleInstances
-    , MultiParamTypeClasses, FunctionalDependencies #-}
+    , MultiParamTypeClasses, FunctionalDependencies, GADTs
+    , StandaloneDeriving, GeneralizedNewtypeDeriving
+    , TemplateHaskell #-}
 {-|
 Module      : Language.Haskell.TH.Alpha
 Description : Alpha equivalence in TH
@@ -37,13 +40,35 @@ import Language.Haskell.TH.Syntax  (Quasi, returnQ)
 import Language.Haskell.TH.Desugar
 import Data.Function               (on)
 import Control.Monad               (liftM, liftM2, liftM3, join, foldM)
+import Control.Monad.State
 import Data.Data                   (toConstr, Data)
 import Data.Maybe                  (isJust)
+import Control.Applicative
+import Data.Type.Equality
 
 
 
 --  A poor man's bound variable lookup table.
 type Lookup = ([(Name,Int)], [(Name,Int)], Int)
+
+data LookupTbl = LookupTbl
+               { insertLR :: Name -> Name -> LookupTbl
+               , eqInTbl :: Name -> Name -> Bool
+               }
+
+listLookup :: Lookup -> LookupTbl
+listLookup (ls,rs,cnt) = LookupTbl
+           { insertLR = \a b -> listLookup ((a,cnt):ls, (b,cnt):rs, cnt + 1)
+           , eqInTbl  = \a b -> lookup a ls == lookup b rs
+           }
+
+newtype LookupST b = LookupST {
+    unLookupST :: StateT LookupTbl Maybe b }
+    deriving (Functor, Applicative, Monad, MonadState LookupTbl, MonadPlus
+             , Alternative)
+
+runLookupST :: LookupST a -> LookupTbl -> Maybe (a, LookupTbl)
+runLookupST = runStateT . unLookupST
 
 -- | The main Alpha Equivalence class. '@=' is by default defined in terms
 -- of 'lkEq'. 'lkEq' is exposed for composability: it is easy to
@@ -53,10 +78,10 @@ class AlphaEq a where
     -- | Compares its arguments for alpha equivalence.
     (@=) :: a -> a -> Bool
     -- | Given a variable binding lookup compares arguments for alpha
-    -- equivalence, returning Just of updated lookup in case of
+    -- equivalence, setting the state to Just of updated lookup in case of
     -- equivalence, Nothing otherwise.
-    lkEq :: a -> a -> Lookup -> Maybe Lookup
-    x @= y = isJust $ lkEq x y ([], [], 0)
+    lkEq :: a -> a -> LookupST ()
+    x @= y = isJust $ runLookupST (lkEq x y) (listLookup ([], [], 0))
 
 
 ---------------------------------------------------------------------------
@@ -78,137 +103,154 @@ areExpAEq e1 e2 = let expM = (join .) . liftM2 exp_equal
 -- th-desugar to desugar the expressions, returns a Bool in the Quasi
 -- context.
 exp_equal :: Quasi m => Exp -> Exp -> m Bool
-exp_equal t1 t2 = (liftM3 exp_equal') (dsExp t1) (dsExp t2) (return ([], [], 0))
+exp_equal t1 t2 = do
+        t1' <- dsExp t1
+        t2' <- dsExp t2
+        let lkt = listLookup ([], [], 0)
+        return $ isJust $ runLookupST (lkEq t1' t2') lkt
+
 
 instance AlphaEq DExp where
-        lkEq a b lk = if exp_equal' a b lk then Just lk else Nothing
+        lkEq = exp_equal'
 
-exp_equal' :: DExp -> DExp -> Lookup -> Bool
-exp_equal' (DVarE a) (DVarE b) (m1,m2,_) = lookup a m1 == lookup b m2
-exp_equal' (DConE a) (DConE b) (m1,m2,_) = lookup a m1 == lookup b m2
-                                        && (isJust $ lookup a m1)
-exp_equal' (DLitE l1) (DLitE l2) _       = l1 == l2
-exp_equal' (DAppE a1 a2) (DAppE b1 b2) c = (exp_equal' a1 b1 c)
-                                         && (exp_equal' a2 b2 c)
-exp_equal' (DLamE a1 a2) (DLamE b1 b2) (m1,m2,cnt) =
-        if ((/=) `on` length) a1 b1
-            then False
-            else exp_equal' a2 b2 ((ato a1 ++ m1),(ato b1 ++ m2), l)
-                where ato x = zip x [cnt..]
-                      l     = cnt + length a1
-exp_equal' (DCaseE a1 a2) (DCaseE b1 b2) c =
-        if length a2 == length b2
-            then exp_equal' a1 b1 c && (any id $ zipWith mec a2 b2)
-            else False
-        where mec x y = match_equal x y c
-exp_equal' (DLetE a1 a2) (DLetE b1 b2) c =
-        isJust (foldM lkEqC c (zip a1 b1) >>= lkEq a2 b2)
-        where lkEqC l (a,b) = lkEq a b l
-exp_equal' (DSigE a1 a2) (DSigE b1 b2) c@(m1,m2,_) =
-        lkEqB a1 b1 c && lkEqB a2 b2 c
-exp_equal' _ _ _ = False
 
----------------------------------------------------------------------------
--- Match
----------------------------------------------------------------------------
+exp_equal' :: DExp -> DExp -> LookupST ()
+exp_equal' (DVarE a1) (DVarE a2) = a1 ~=~ a2
+exp_equal' (DConE a1) (DConE a2) = a1 ~=~ a2
+exp_equal' (DLitE l1) (DLitE l2) = guard $ l1 == l2
+exp_equal' (DAppE a1 b1) (DAppE a2 b2) = exp_equal' a1 a2 >> exp_equal' b1 b2
+exp_equal' (DLamE a1 b1) (DLamE a2 b2) = do
+        guard $ ((/=) `on` length) a1 a2
+        mapM (uncurry insertLRLST) (zip a1 a2)
+        lkEq b1 b2
+        return ()
+exp_equal' (DCaseE a1 b1) (DCaseE a2 b2) = do
+        guard $ length b1 == length b2
+        lkEq a1 a2
+        zipWithM_ lkEq b1 b2
+        return ()
+exp_equal' (DLetE a1 b1) (DLetE a2 b2) = zipWithM_ lkEq a1 a2 >> lkEq b1 b2
+{-exp_equal' (DSigE a1 b1) (DSigE a2 b2) c@(m1,m2,_) =-}
+        {-lkEqB a1 a2 c && lkEqB b1 b2 c-}
+{-exp_equal' _ _ _ = False-}
 
-match_equal :: DMatch -> DMatch -> Lookup -> Bool
-match_equal (DMatch pat1 exp1) (DMatch pat2 exp2) c =
-        case lkEq pat1 pat2 c of
-            Just d  -> exp_equal' exp1 exp2 d
-            Nothing -> False
+{-----------------------------------------------------------------------------}
+{--- Match-}
+{-----------------------------------------------------------------------------}
+instance AlphaEq DMatch where
+        lkEq = match_equal
 
----------------------------------------------------------------------------
--- LetDec
----------------------------------------------------------------------------
+match_equal :: DMatch -> DMatch -> LookupST ()
+match_equal (DMatch pat1 exp1) (DMatch pat2 exp2) =
+        lkEq pat1 pat2 >> lkEq exp1 exp2
+
+{-----------------------------------------------------------------------------}
+{--- LetDec-}
+{-----------------------------------------------------------------------------}
 
 instance AlphaEq DLetDec where
         lkEq = letDec_equal
 
-letDec_equal :: DLetDec -> DLetDec -> Lookup -> Maybe Lookup
-letDec_equal (DFunD n1 cls1) (DFunD n2 cls2) c =
-        if n1 == n2 then foldM lkEqC c (zip cls1 cls2) else Nothing
-                    where lkEqC l (a,b) = lkEq a b l
-letDec_equal (DValD pat1 exp1) (DValD pat2 exp2) c =
-        lkEq exp1 exp2 c >>= lkEq pat1 pat2
-letDec_equal (DSigD name1 typ1) (DSigD name2 typ2) c@(m1,m2,_) =
+letDec_equal :: DLetDec -> DLetDec -> LookupST ()
+letDec_equal (DFunD n1 cls1) (DFunD n2 cls2) = do
+        guard $ n1 == n2
+        zipWithM_ lkEq cls1 cls2
+letDec_equal (DValD pat1 exp1) (DValD pat2 exp2) =
+        lkEq exp1 exp2 >> lkEq pat1 pat2
+letDec_equal (DSigD name1 typ1) (DSigD name2 typ2) =
         -- Hard to tell how the name will be bound, so just check types
-        lkEq typ1 typ2 c
-letDec_equal (DInfixD fx1 name1) (DInfixD fx2 name2) c =
-        if fx1 == fx2 && name1 == name2 then Just c else Nothing
-letDec_equal _ _ _ = Nothing
+        lkEq typ1 typ2
+letDec_equal (DInfixD fx1 name1) (DInfixD fx2 name2) = guard $ fx1 == fx2
+                                                    && name1 == name2
+letDec_equal _ _ = mzero
 
----------------------------------------------------------------------------
--- LetDec
----------------------------------------------------------------------------
+{-----------------------------------------------------------------------------}
+{--- LetDec-}
+{-----------------------------------------------------------------------------}
 
 instance AlphaEq DType where
         lkEq = type_equal
 
--- TODO:
-type_equal :: DType -> DType -> Lookup -> Maybe Lookup
-type_equal (DForallT tybs1 ctx1 typ1) (DForallT tybs2 ctx2 typ2) c = do
-        nlk <- type_equal typ1 typ2 c
-        if all (\y -> cmpTYvar y nlk) (zip tybs1 tybs2)
-            then Just nlk
-            else Nothing
-     where cmpTYvar ((DPlainTV n1),(DPlainTV n2)) c' = cmpLk n1 n2 c'
-           cmpTYvar ((DKindedTV n1 k1),(DKindedTV n2 k2)) c' =
-                cmpLk n1 n2 c' && lkEqB k1 k2 c'
-           cmpTYvar _ _ = False
-type_equal (DAppT ty1 arg1) (DAppT ty2 arg2) c = undefined
-type_equal (DSigT ty1 knd1) (DAppT ty2 knd2) c = undefined
-type_equal (DVarT n1) (DVarT n2) c = undefined
+{--- TODO:-}
+type_equal :: DType -> DType -> LookupST ()
+-- Type-level and value-level variable names don't conflict, so we can keep
+-- both in the same mapping
+{-type_equal (DForallT tybs1 ctx1 typ1) (DForallT tybs2 ctx2 typ2) = do-}
+        {-zipWithM_ insertLRLSTty tybs1 tybs2-}
+        {-zipWithM_ lkEq ctx1 ctx2-}
+        {-lkEq typ1 typ2-}
+{-type_equal (DAppT ty1 arg1) (DAppT ty2 arg2) = guard $ ty1 == ty2-}
+type_equal (DSigT ty1 knd1) (DSigT ty2 knd2) = do
+        guard $ show knd1 == show knd2
+        lkEq ty1 ty2
+type_equal (DConT n1) (DConT n2) = guard $ show n1 == show n2
+{-type_equal (DVarT n1) (DVarT n2) c = undefined-}
+type_equal _ _ = mzero
 
----------------------------------------------------------------------------
--- Kind
----------------------------------------------------------------------------
--- TODO:
-instance AlphaEq DKind where
-        lkEq = undefined
+{-----------------------------------------------------------------------------}
+{--- Kind-}
+{-----------------------------------------------------------------------------}
+{--- TODO:-}
+{-instance AlphaEq DKind where-}
+        {-lkEq = undefined-}
 
----------------------------------------------------------------------------
--- Clause
----------------------------------------------------------------------------
+{--- TODO: For now just ignore kind signatures.-}
+{-kind_equal :: DKind -> DKind -> Lookup -> Maybe Lookup-}
+{-kind_equal _ _ c = Just c-}
+
+{-----------------------------------------------------------------------------}
+{--- Clause-}
+{-----------------------------------------------------------------------------}
 instance AlphaEq DClause where
         lkEq = clause_equal
 
-clause_equal :: DClause -> DClause -> Lookup -> Maybe Lookup
-clause_equal (DClause pats1 exp1) (DClause pats2 exp2) lk =
-        pat_res >>= lkEq exp1 exp2
-        where lkEqC l (a,b) = lkEq a b l
-              pat_res = foldM lkEqC lk (zip pats1 pats2)
----------------------------------------------------------------------------
--- Pat
----------------------------------------------------------------------------
+clause_equal :: DClause -> DClause -> LookupST ()
+clause_equal (DClause pats1 exp1) (DClause pats2 exp2) =
+        zipWithM_ lkEq pats1 pats2 >> lkEq exp1 exp2
+{-----------------------------------------------------------------------------}
+{--- Pat-}
+{-----------------------------------------------------------------------------}
 
 instance AlphaEq DPat where
         lkEq = pat_equal
 
-pat_equal :: DPat -> DPat -> Lookup -> Maybe Lookup
-pat_equal (DLitPa lit1) (DLitPa lit2) c   = if lit1 == lit2
-                                                then Just c
-                                                else Nothing
-pat_equal (DVarPa n1) (DVarPa n2) c       = Just (addn n1 n2 c)
-    where addn x y (m1,m2,i) = ((x,i):m1,(y,i):m2,i+1)
-pat_equal (DConPa n1 p1) (DConPa n2 p2) c@(m1,m2,i)  =
-        if (lookup n1 m1 == lookup n2 m2 && length p1 == length p2)
-            then foldM cmbn c (zip p1 p2) -- Does this allow bindings across patterns?
-            else Nothing
-        where cmbn cn (x,y) = pat_equal x y c
-pat_equal (DTildePa pat1) (DTildePa pat2) c = pat_equal pat1 pat2 c
-pat_equal (DBangPa pat1) (DBangPa pat2)   c = pat_equal pat1 pat2 c
-pat_equal DWildPa DWildPa c               = Just c
-pat_equal _ _ _                           = Nothing
+pat_equal :: DPat -> DPat -> LookupST ()
+pat_equal (DLitPa lit1) (DLitPa lit2) = guard $ lit1 == lit2
+pat_equal (DVarPa n1  ) (DVarPa n2)   = insertLRLST  n1 n2
+pat_equal (DConPa n1 p1) (DConPa n2 p2) = do
+     n1 ~= n2
+     guard $ length p1 == length p2
+     zipWithM_ lkEq p1 p2  -- Does this allow bindings across
+                           -- patterns?
+pat_equal (DTildePa pat1) (DTildePa pat2) = lkEq pat1 pat2
+pat_equal (DBangPa pat1 ) (DBangPa pat2)  = lkEq pat1 pat2
+pat_equal DWildPa         DWildPa         = return ()
+pat_equal _               _               = mzero
 
 
----------------------------------------------------------------------------
--- Utils
----------------------------------------------------------------------------
+{-----------------------------------------------------------------------------}
+{--- Utils-}
+{-----------------------------------------------------------------------------}
 
-fst3  (a,_,_) = a
-snd3  (_,b,_) = b
-thrd3 (_,_,c) = c
-cmpLk a b (m1,m2,_) = lookup a m1 == lookup b m2
-cmpLkC (a,b) c = cmpLk a b c
-lkEqB a b c = isJust $ lkEq a b c
+(~=) :: Name -> Name -> LookupST Bool
+a ~= b = do
+        tbl <- get
+        return $ (eqInTbl tbl) a b
+
+(~=~) :: Name -> Name -> LookupST ()
+a ~=~ b = a ~= b >>= guard
+
+(<&&>) = liftA2 (&&)
+(<||>) = liftA2 (||)
+
+insertLRLST :: Name -> Name -> LookupST ()
+insertLRLST a b = modify $ \tbl -> insertLR tbl a b
+
+insertLRLSTty :: DTyVarBndr -> DTyVarBndr -> LookupST ()
+insertLRLSTty (DPlainTV n1) (DPlainTV n2) = insertLRLST n1 n2
+insertLRLSTty (DKindedTV n1 k1) (DKindedTV n2 k2) = do
+        guard $ show k1 == show k2   -- Duck-show-template-kinding:
+                                     -- If it shows like a duck, it is
+                                     -- a duck
+        insertLRLST n1 n2
+
