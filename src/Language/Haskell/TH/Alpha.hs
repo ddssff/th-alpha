@@ -1,4 +1,3 @@
-
 {-# LANGUAGE NoMonomorphismRestriction, TypeFamilies, FlexibleInstances
     , MultiParamTypeClasses, FunctionalDependencies, GADTs
     , StandaloneDeriving, GeneralizedNewtypeDeriving
@@ -44,7 +43,6 @@ import Control.Monad.State
 import Data.Data                   (toConstr, Data)
 import Data.Maybe                  (isJust)
 import Control.Applicative
-import Data.Type.Equality
 
 
 

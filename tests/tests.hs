@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell  #-}
 module Main where
 
 import Test.Tasty
@@ -20,6 +20,11 @@ unitTests = testGroup "Unit tests"
     do
        b <- areExpAEq [| \x -> x|]  [| \y -> y|]
        assertBool "Expressions not considered equal!" b
+  , testCase "Nested lambda expressions with different bound variables" $
+    do
+       b <- areExpAEq [| \f -> \a -> \b -> f a b |]  [| \g -> \x -> \y -> g x y|]
+       assertBool "Expressions not considered equal!" b
+
   , testCase "Equal literals" $
     do
        b <- areExpAEq [| 5 |] [| 5 |]
