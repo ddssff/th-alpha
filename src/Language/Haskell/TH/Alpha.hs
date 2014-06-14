@@ -52,12 +52,16 @@ type Lookup = ([(Name,Int)], [(Name,Int)], Int)
 data LookupTbl = LookupTbl
                { insertLR :: Name -> Name -> LookupTbl
                , eqInTbl :: Name -> Name -> Bool
+               , isInL :: Name -> Bool
+               , isInR :: Name -> Bool
                }
 
 listLookup :: Lookup -> LookupTbl
 listLookup (ls,rs,cnt) = LookupTbl
            { insertLR = \a b -> listLookup ((a,cnt):ls, (b,cnt):rs, cnt + 1)
            , eqInTbl  = \a b -> lookup a ls == lookup b rs
+           , isInL    = \a   -> isJust $ lookup a ls
+           , isInR    = \b   -> isJust $ lookup b rs
            }
 
 newtype LookupST b = LookupST {
@@ -113,13 +117,17 @@ instance AlphaEq DExp where
 
 
 exp_equal' :: DExp -> DExp -> LookupST ()
-exp_equal' (DVarE a1) (DVarE a2) = a1 ~=~ a2
+exp_equal' (DVarE a1) (DVarE a2) = do
+        a1 ~=~ a2
+        if show a1 /= show a2
+            then guard =<< isInL' a1
+            else return ()
 exp_equal' (DConE a1) (DConE a2) = a1 ~=~ a2
 exp_equal' (DLitE l1) (DLitE l2) = guard $ l1 == l2
-exp_equal' (DAppE a1 b1) (DAppE a2 b2) = exp_equal' a1 a2 >> exp_equal' b1 b2
+exp_equal' (DAppE a1 b1) (DAppE a2 b2) = lkEq a1 a2 >> lkEq b1 b2
 exp_equal' (DLamE a1 b1) (DLamE a2 b2) = do
-        guard $ ((/=) `on` length) a1 a2
-        mapM (uncurry insertLRLST) (zip a1 a2)
+        guard $ ((==) `on` length) a1 a2
+        zipWithM_ insertLRLST a1 a2
         lkEq b1 b2
         return ()
 exp_equal' (DCaseE a1 b1) (DCaseE a2 b2) = do
@@ -130,7 +138,7 @@ exp_equal' (DCaseE a1 b1) (DCaseE a2 b2) = do
 exp_equal' (DLetE a1 b1) (DLetE a2 b2) = zipWithM_ lkEq a1 a2 >> lkEq b1 b2
 {-exp_equal' (DSigE a1 b1) (DSigE a2 b2) c@(m1,m2,_) =-}
         {-lkEqB a1 a2 c && lkEqB b1 b2 c-}
-{-exp_equal' _ _ _ = False-}
+exp_equal' _ _ = mzero
 
 {-----------------------------------------------------------------------------}
 {--- Match-}
@@ -216,7 +224,7 @@ pat_equal :: DPat -> DPat -> LookupST ()
 pat_equal (DLitPa lit1) (DLitPa lit2) = guard $ lit1 == lit2
 pat_equal (DVarPa n1  ) (DVarPa n2)   = insertLRLST  n1 n2
 pat_equal (DConPa n1 p1) (DConPa n2 p2) = do
-     n1 ~= n2
+     n1 ~=~ n2
      guard $ length p1 == length p2
      zipWithM_ lkEq p1 p2  -- Does this allow bindings across
                            -- patterns?
@@ -230,13 +238,20 @@ pat_equal _               _               = mzero
 {--- Utils-}
 {-----------------------------------------------------------------------------}
 
-(~=) :: Name -> Name -> LookupST Bool
-a ~= b = do
-        tbl <- get
-        return $ (eqInTbl tbl) a b
-
 (~=~) :: Name -> Name -> LookupST ()
-a ~=~ b = a ~= b >>= guard
+a ~=~ b = do
+        tbl <- get
+        guard $ (eqInTbl tbl) a b
+        b <- isInL' a
+        if b
+            then return ()
+            else guard $ show a == show b
+
+
+isInL' :: Name -> LookupST Bool
+isInL' n = do
+        tbl <- get
+        return $ (isInL tbl) n
 
 (<&&>) = liftA2 (&&)
 (<||>) = liftA2 (||)
