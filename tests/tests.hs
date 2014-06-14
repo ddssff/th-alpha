@@ -37,6 +37,14 @@ unitTests = testGroup "Unit tests"
     do
        b <- areExpAEq [| let x = 5 in x |] [| let y = 5 in y |]
        assertBool "Expressions not considered equal!" b
+  , testCase "Different open terms" $
+    do
+       b <- areExpAEq [| tail |] [| head |]
+       assertBool "Expressions considered equal!" (not b)
+  , testCase "Same open terms" $
+    do
+       b <- areExpAEq [| tail |] [| tail |]
+       assertBool "Expressions not considered equal!" b
   ]
 
 

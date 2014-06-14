@@ -117,11 +117,7 @@ instance AlphaEq DExp where
 
 
 exp_equal' :: DExp -> DExp -> LookupST ()
-exp_equal' (DVarE a1) (DVarE a2) = do
-        a1 ~=~ a2
-        if show a1 /= show a2
-            then guard =<< isInL' a1
-            else return ()
+exp_equal' (DVarE a1) (DVarE a2) = a1 ~=~ a2
 exp_equal' (DConE a1) (DConE a2) = a1 ~=~ a2
 exp_equal' (DLitE l1) (DLitE l2) = guard $ l1 == l2
 exp_equal' (DAppE a1 b1) (DAppE a2 b2) = lkEq a1 a2 >> lkEq b1 b2
@@ -242,8 +238,8 @@ pat_equal _               _               = mzero
 a ~=~ b = do
         tbl <- get
         guard $ (eqInTbl tbl) a b
-        b <- isInL' a
-        if b
+        bol <- isInL' a
+        if bol
             then return ()
             else guard $ show a == show b
 
