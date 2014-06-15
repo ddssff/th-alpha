@@ -4,17 +4,17 @@ module Main where
 import Test.Tasty
 import Test.Tasty.HUnit
 
-import Language.Haskell.TH
-import Control.Monad (liftM2, join)
 
 import Language.Haskell.TH.Alpha
 
+main :: IO ()
 main = defaultMain tests
 
 
 tests :: TestTree
 tests = testGroup "Tests" [unitTests]
 
+unitTests :: TestTree
 unitTests = testGroup "Unit tests"
   [ testCase "Lambda expressions with different bound variables" $
     do
