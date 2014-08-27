@@ -33,9 +33,9 @@ types (e.g. TyVarBndr).
 -}
 
 module Language.Haskell.TH.Alpha (
-    {-areExpAEq,-}
-    {-exp_equal,-}
-    {-AlphaEq(..)-}
+    areExpAEq,
+    exp_equal,
+    AlphaEq(..)
     ) where
 
 import Language.Haskell.TH
@@ -78,9 +78,19 @@ newtype LookupSTM m b = LookupST {
     } deriving (Functor, Applicative, Monad, MonadState LookupTbl
                , MonadPlus, Alternative)
 
-{-instance MonadTrans (LookupSTM) where-}
-{-lift' :: (Monad m) =>  a -> LookupSTM m a-}
-{-lift' m = LookupST $ StateT $ \tbl -> MaybeT $ m tbl-}
+---------------------------------------------------------------------------
+-- Lifting and hoisting
+--
+--   This section is primarily concerned with making moving from a pure
+--   (Identity) context to other monads easy. We do this because desugaring
+--   (and other TH-related activities) end us up in some Quasi monad, so
+--   when a AlphaEq instance uses th-desugar for its arguments, but a pure
+--   function for its subexpressions, it ends up crossing a signature
+--   boundary that ideally shouldn't be annoying.
+---------------------------------------------------------------------------
+instance MonadTrans (LookupSTM) where
+    lift m = LookupST $ StateT (\tbl -> MaybeT $ m >>= \x -> return $ Just (x, tbl))
+
 
 -- This is ugly, but the signature and name should explain it well enough.
 hoist' :: (Monad m) => (forall a . m a -> n a) -> LookupSTM m b -> LookupSTM n b
@@ -89,18 +99,18 @@ hoist' nat lkstm = LookupST $ StateT (\tbl -> MaybeT . nat . runMaybeT $ runStat
 instance MFunctor LookupSTM where
     hoist = hoist'
 
+toQ :: LookupST b -> LookupSTQ b
+toQ = hoist generalize
 
 type LookupST b  = LookupSTM Identity b
 type LookupSTQ b = LookupSTM Q b
 
-toQ :: LookupST b -> LookupSTQ b
-toQ = hoist generalize
 
-{-liftLookupSTQ :: (a -> a -> LookupST b) -> (Q a -> Q a -> LookupSTQ b)-}
-{-liftLookupSTQ f a b = dsExp-}
+runLookupST :: Monad m => LookupSTM m a -> LookupTbl -> m (Maybe (a, LookupTbl))
+runLookupST st tbl = runMaybeT $ runStateT (unLookupST st) tbl
 
-runLookupST :: LookupST a -> LookupTbl -> Maybe (a, LookupTbl)
-runLookupST st tbl = runIdentity $ runMaybeT $ runStateT (unLookupST st) tbl
+runLookupST' :: LookupST a -> LookupTbl -> Maybe (a, LookupTbl)
+runLookupST' = (runIdentity .) . runLookupST
 
 -- | The main Alpha Equivalence class. '@=' is by default defined in terms
 -- of 'lkEq'. 'lkEq' is exposed for composability: it is easy to
@@ -115,8 +125,8 @@ class AlphaEq a m | a -> m where
 -- | Compares its arguments for alpha equivalence. The default
 -- implementation uses Lookup for its LookupTbl, but more efficient
 -- datatypes can be used.
-(@=) :: AlphaEq a Identity => a -> a -> Bool
-x @= y = isJust $ runLookupST (lkEq x y) (listLookup ([], [], 0))
+(@=) :: (Monad m, AlphaEq a m) => a -> a -> m Bool
+x @= y = liftM isJust $ runLookupST (lkEq x y) (listLookup ([], [], 0))
 
 
 ---------------------------------------------------------------------------
@@ -127,21 +137,18 @@ x @= y = isJust $ runLookupST (lkEq x y) (listLookup ([], [], 0))
 --
 -- >>> areExpAEq [| let x = 5 in x |] [| let y = 5 in y |]
 -- True
-{-areExpAEq :: Quasi m-}
-         {-=> ExpQ    -- ^ Quoted expression-}
-         {--> ExpQ    -- ^ Quoted expression-}
-         {--> m Bool-}
-{-areExpAEq e1 e2 = let expM = (join .) . liftM2 exp_equal-}
-                 {-in expM (runQ e1) (runQ e2)-}
+areExpAEq :: Quasi m
+         => ExpQ    -- ^ Quoted expression
+         -> ExpQ    -- ^ Quoted expression
+         -> m Bool
+areExpAEq e1 e2 = let expM = (join .) . liftM2 exp_equal
+                 in expM (runQ e1) (runQ e2)
 
-{-instance AlphaEq Exp Q where-}
-        {-lkEq = eeq-}
-
-{-eeq :: Exp -> Exp -> LookupSTQ ()-}
-{-eeq e1 e2 = do-}
-    {-e1' <- lift $ dsExp e1-}
-    {-e2' <- lift $ dsExp e2-}
-    {-toQ $ exp_equal' e1' e2'-}
+instance AlphaEq Exp Q where
+        lkEq e1 e2 = do
+            e1' <- lift $ dsExp e1
+            e2' <- lift $ dsExp e2
+            toQ $ exp_equal' e1' e2'
 
 
 {--- | Compare two expressions for alpha-equivalence. Since this uses-}
@@ -152,7 +159,7 @@ exp_equal t1 t2 = do
     t1' <- dsExp t1
     t2' <- dsExp t2
     let lkt = listLookup ([], [], 0)
-    return $ isJust $ runLookupST (lkEq t1' t2') lkt
+    return $ isJust $ runLookupST' (lkEq t1' t2') lkt
 
 
 instance AlphaEq DExp Identity where
