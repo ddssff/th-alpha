@@ -5,6 +5,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 
+import Language.Haskell.TH
 import Language.Haskell.TH.Alpha
 
 main :: IO ()
@@ -48,6 +49,12 @@ unitTests = testGroup "Unit tests"
   , testCase "Same lambda'd terms" $
     do
        b <- areExpAEq [| \x -> tail x |] [| \y -> tail y |]
+       assertBool "Expressions not considered equal!" b
+  , testCase "@=" $
+    do
+       let x = mkName "x"
+       let y = mkName "y"
+       b <- runQ $ (LamE [VarP x] (VarE x)) @= (LamE [VarP y] (VarE y))
        assertBool "Expressions not considered equal!" b
   ]
 
