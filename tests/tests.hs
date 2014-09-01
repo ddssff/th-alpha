@@ -45,6 +45,10 @@ unitTests = testGroup "Unit tests"
     do
        b <- areExpAEq [| tail |] [| tail |]
        assertBool "Expressions not considered equal!" b
+  , testCase "Same lambda'd terms" $
+    do
+       b <- areExpAEq [| \x -> tail x |] [| \y -> tail y |]
+       assertBool "Expressions not considered equal!" b
   ]
 
 
