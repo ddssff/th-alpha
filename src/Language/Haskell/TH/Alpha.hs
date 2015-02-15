@@ -151,7 +151,7 @@ infix 4 @=     -- Same as (==)
 --
 -- >>> areExpAEq [| let x = 5 in x |] [| let y = 5 in y |]
 -- True
-areExpAEq :: Quasi m
+areExpAEq :: DsMonad m
          => ExpQ    -- ^ Quoted expression
          -> ExpQ    -- ^ Quoted expression
          -> m Bool
@@ -168,7 +168,7 @@ instance AlphaEq Exp Q where
 {--- | Compare two expressions for alpha-equivalence. Since this uses-}
 {--- th-desugar to desugar the expressions, returns a Bool in the Quasi-}
 {--- context.-}
-expEqual :: Quasi m => Exp -> Exp -> m Bool
+expEqual :: DsMonad m => Exp -> Exp -> m Bool
 expEqual t1 t2 = do
     t1' <- dsExp t1
     t2' <- dsExp t2
