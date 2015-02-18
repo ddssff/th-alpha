@@ -1,5 +1,6 @@
 {-# LANGUAGE
-      FunctionalDependencies
+      CPP
+    , FunctionalDependencies
     , GeneralizedNewtypeDeriving
     , RankNTypes
     , FlexibleContexts
@@ -39,7 +40,9 @@ module Language.Haskell.TH.Alpha (
     ) where
 
 import Language.Haskell.TH
+#if !MIN_VERSION_th_desugar(1,5,0)
 import Language.Haskell.TH.Syntax  (Quasi)
+#endif
 import Language.Haskell.TH.Desugar
 import Data.Function               (on)
 import Control.Monad.State
@@ -151,7 +154,12 @@ infix 4 @=     -- Same as (==)
 --
 -- >>> areExpAEq [| let x = 5 in x |] [| let y = 5 in y |]
 -- True
-areExpAEq :: DsMonad m
+areExpAEq ::
+#if MIN_VERSION_th_desugar(1,5,0)
+            DsMonad m
+#else
+            Quasi m
+#endif
          => ExpQ    -- ^ Quoted expression
          -> ExpQ    -- ^ Quoted expression
          -> m Bool
@@ -168,7 +176,15 @@ instance AlphaEq Exp Q where
 {--- | Compare two expressions for alpha-equivalence. Since this uses-}
 {--- th-desugar to desugar the expressions, returns a Bool in the Quasi-}
 {--- context.-}
-expEqual :: DsMonad m => Exp -> Exp -> m Bool
+expEqual ::
+#if MIN_VERSION_th_desugar(1,5,0)
+            DsMonad m
+#else
+            Quasi m
+#endif
+         => Exp
+         -> Exp
+         -> m Bool
 expEqual t1 t2 = do
     t1' <- dsExp t1
     t2' <- dsExp t2
