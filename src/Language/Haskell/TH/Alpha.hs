@@ -274,6 +274,7 @@ typeEqual _                          _                          = mzero
 ---------------------------------------------------------------------------
 -- Kind
 ---------------------------------------------------------------------------
+#if !MIN_VERSION_th_desugar(1,6,0)
 instance AlphaEq DKind Identity where
     lkEq = kindEqual
 
@@ -287,6 +288,7 @@ kindEqual (DArrowK knda1 kndb1) (DArrowK knda2 kndb2) = lkEq knda1 knda2
                                                       >> lkEq kndb1 kndb2
 kindEqual DStarK                DStarK                = return ()
 kindEqual _                     _                     = mzero
+#endif
 
 ---------------------------------------------------------------------------
 -- Clause
