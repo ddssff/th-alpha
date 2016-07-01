@@ -32,6 +32,10 @@ stability:           alpha
 homepage:            https://github.com/jkarni/th-alpha
 bug-reports:         https://github.com/jkarni/th-alpha/issues
 
+source-repository head
+  type:              git
+  location:          https://github.com/jkarni/th-alpha
+
 library
   exposed-modules:     Language.Haskell.TH.Alpha
   build-depends:       base >=4 && <5

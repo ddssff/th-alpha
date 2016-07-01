@@ -1,5 +1,8 @@
 *.hi
 *.o
 dist/
+dist-newstyle/
+cabal.project.local
+default.nix
 cabal.sandbox.config
 .cabal-sandbox
